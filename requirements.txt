@@ -1,0 +1,53 @@
+# ==============================================================================
+# Dependencies for youtube-vector-rag-llamaindex
+# Covers Vector-self-make-youtube-reader-cmd.py
+# Python 3.10 or newer is recommended.
+# Versions are left unpinned except where the script needs a specific API.
+# If pip reports a resolver conflict, install into a clean virtual environment
+# with a single "pip install -r requirements.txt".
+# ==============================================================================
+
+# --- LlamaIndex core (Settings, Document, VectorStoreIndex, StorageContext,
+#     SentenceSplitter, SentenceTransformerRerank, Memory, callbacks)
+# The script uses llama_index.core.memory.Memory, so keep this package recent.
+llama-index-core
+
+# --- LlamaIndex integrations imported directly by the script
+llama-index-vector-stores-chroma
+llama-index-embeddings-google-genai
+llama-index-llms-litellm
+
+# --- Vector database client (chromadb.CloudClient for Chroma Cloud)
+# The script calls chromadb.CloudClient(api_key=...) without a tenant or a database.
+# That only works from version 1.1.0 onward. Older versions require both arguments.
+chromadb>=1.1.0
+
+# --- Transcript fetching
+# The script calls YouTubeTranscriptApi().fetch(...) on an instance, which exists
+# from version 1.0.0 onward. Older versions only offer static methods.
+youtube-transcript-api>=1.0.0
+
+# --- LLM routing and cost tracking (Gemini calls and completion_cost)
+litellm
+
+# --- Token counting (cl100k_base encoder used by TokenCountingHandler)
+tiktoken
+
+# --- Cross-encoder reranker (SentenceTransformerRerank)
+# Not imported by the script directly, but the reranker needs both packages at runtime.
+# torch is a large download, and the model weights are fetched from Hugging Face on the first run.
+sentence-transformers
+torch
+
+# --- Tracing with Arize Phoenix (phoenix.otel.register and the LlamaIndex instrumentor)
+arize-phoenix-otel
+openinference-instrumentation-llama-index
+
+# --- Async PostgreSQL driver for the chat memory (ASYNCPG_DATABASE_URL)
+asyncpg
+
+# --- Utilities
+# Loads the .env file
+python-dotenv
+# Allows asyncio.run() to work inside already running event loops (CLI and Jupyter)
+nest-asyncio
