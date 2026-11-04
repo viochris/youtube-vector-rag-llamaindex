@@ -419,7 +419,7 @@ When something fails after the startup key check, the script prints the tracebac
 | `GOOGLE_API_KEY is missing` or `PHOENIX_API_KEY is missing` at startup | The variable is missing from `.env`, or the file is not in the project root | Add the variable to `.env` in the project root and run the script again |
 | LiteLLM reports a missing Gemini key | LiteLLM did not find the key in the environment | Also set `GEMINI_API_KEY` in `.env` with the same value as `GOOGLE_API_KEY` |
 | `UNKNOWN ERROR` mentioning a transcript | The video has no captions, captions are disabled, or no English transcript exists | Choose a video that has English captions |
-| `UNKNOWN ERROR` mentioning an invalid YouTube URL | The URL does not contain `youtube` or `youtu.be` | Use a standard `youtube.com` or `youtu.be` link |
+| `UNKNOWN ERROR` mentioning an invalid YouTube URL | The URL does not contain `youtube` or `youtu.be`, and has no `v=` parameter | Use a standard `youtube.com` or `youtu.be` link |
 | YouTube refuses the request | YouTube can block requests from some cloud provider and VPN IP addresses | Run the script from a regular home or office connection |
 | Answers still come from the old video | The collection already has data, so the new URLs are ignored | Delete the collection as shown in step 7 |
 | `UNKNOWN ERROR` (`TypeError`) saying `CloudClient()` is missing `tenant` and `database` | An old `chromadb` version is installed, and it requires both arguments | Run `pip install --upgrade "chromadb>=1.1.0"` or reinstall from `requirements.txt` |
