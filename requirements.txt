@@ -19,7 +19,8 @@ llama-index-llms-litellm
 
 # --- Vector database client (chromadb.CloudClient for Chroma Cloud)
 # The script calls chromadb.CloudClient(api_key=...) without a tenant or a database.
-# That only works from version 1.1.0 onward. Older versions require both arguments.
+# That only works from a late 1.0.x release onward (it fails on 1.0.10 and works on 1.0.15).
+# The bound is set at 1.1.0 to stay on the safe side. Older versions require both arguments.
 chromadb>=1.1.0
 
 # --- Transcript fetching
