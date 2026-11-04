@@ -1,6 +1,6 @@
 # 🎬 YouTube Vector RAG Chatbot (LlamaIndex)
 
-A CLI chatbot that lets you chat with a YouTube video through its transcript. It fetches the captions once, splits and embeds them into ChromaDB Cloud, retrieves and reranks the most relevant passages for every question, and is instructed to answer strictly from what the video says, while remembering the conversation across runs in PostgreSQL. This is the plain **Vector RAG** version, where context is found only by similarity search.
+A CLI chatbot that lets you chat with a YouTube video through its transcript. The first time you run it, it fetches the video's captions, splits them into overlapping chunks, embeds the chunks, and stores the vectors in ChromaDB Cloud. From then on, every question is answered by retrieving the most relevant chunks, reranking them with a cross-encoder, and passing the best ones to Gemini, which is instructed to answer strictly from what the video says. The conversation is saved in PostgreSQL, so it carries over between runs. This is the plain **Vector RAG** version, where context is found only by similarity search over embeddings.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat&logo=python&logoColor=white)
 ![LlamaIndex](https://img.shields.io/badge/Framework-LlamaIndex-6E56CF?style=flat)
@@ -14,40 +14,40 @@ A CLI chatbot that lets you chat with a YouTube video through its transcript. It
 
 ## 📌 Overview
 
-This repository contains one CLI script, `Vector-self-make-youtube-reader-cmd.py`, that turns a YouTube video into something you can ask questions. Point it at a list of video URLs and it downloads the transcript, splits it into overlapping chunks, embeds the chunks with Google's Gemini embedding model, stores the vectors in ChromaDB Cloud, and opens an interactive chat loop where answers are built from the retrieved transcript passages.
+This repository contains one CLI script, `Vector-self-make-youtube-reader-cmd.py`, that turns a YouTube video into something you can ask questions. You give it a list of video URLs. It downloads each transcript, splits the text into overlapping chunks, embeds the chunks with Google's Gemini embedding model, and stores the vectors in ChromaDB Cloud. It then opens an interactive chat loop in the terminal, where each answer is built from the transcript passages retrieved for that question.
 
-The transcript loader is written inside the script itself (`load_youtube_transcripts`). It reads the video id from the URL, calls `youtube-transcript-api`, joins the caption snippets into one text, and wraps it in a LlamaIndex `Document` together with the video id and the URL as metadata.
+The transcript loader is written inside the script itself (`load_youtube_transcripts`) instead of using a ready-made LlamaIndex reader. For each URL, it reads the video id, calls `youtube-transcript-api` to get the caption snippets, joins the snippets into one continuous text, and wraps that text in a LlamaIndex `Document`. The video id and the URL are stored in the document's metadata.
 
-Scraping and embedding only happen when the ChromaDB collection is empty. On every later run, the script rebuilds the index straight from the vector store, so nothing is downloaded or embedded again. The index is then wired into a context-mode chat engine with cross-encoder reranking and PostgreSQL-backed memory.
+Downloading and embedding only happen when the ChromaDB collection is empty. On every later run, the script skips both steps and rebuilds the index straight from the vectors already stored in ChromaDB, which saves time and embedding calls. The index is then connected to a context-mode chat engine, with a cross-encoder reranker to refine the retrieved passages and PostgreSQL to store the conversation.
 
-The answers are meant to come from the retrieved context and not from the model's own memory. The system prompt tells the model to answer strictly from the retrieved transcript context, and to say so when the answer is not there. After each answer, the script prints the source passages, the token usage, and the estimated cost of that turn.
+The answers are meant to come from the retrieved transcript passages and not from the model's own memory. The system prompt tells the model to answer strictly from that context and to say so when the answer is not there. This is an instruction and not a hard check, so the printed sources are there to let you verify each answer. After every answer, the script prints the source passages with their scores, the token usage, and the estimated cost of that turn.
 
-This repository is the Vector version of a three-architecture comparison (Vector, Graph, and Hybrid RAG). See [Three RAG Architectures](#-three-rag-architectures) for how they differ.
+This repository is the Vector version of a three-architecture comparison (Vector, Graph, and Hybrid RAG). See [Three RAG Architectures](#-three-rag-architectures) for how they differ and where each one lives.
 
 Here is what happens when you run the script:
 
 1. Load `.env` and stop with a plain error message if `GOOGLE_API_KEY` or `PHOENIX_API_KEY` is missing. This check runs before the error handling in step 10 starts.
-2. Configure the LLM (Gemini through LiteLLM), the embedding model, the chunking, the token counter, and the debug handler.
-3. Register Phoenix tracing, so every run is recorded as a trace.
-4. Create the cross-encoder reranker.
-5. Connect to ChromaDB Cloud and open the `youtube_docs` collection.
+2. Configure the LLM (Gemini through LiteLLM), the embedding model, the chunking, the token counter, and the debug handler that is later used to calculate the cost.
+3. Register Phoenix tracing, so every run is recorded as a trace that you can inspect in the Phoenix web interface.
+4. Create the cross-encoder reranker. Its model weights are downloaded the first time this happens.
+5. Connect to ChromaDB Cloud and open the `youtube_docs` collection, or create it if it does not exist yet.
 6. If the collection is empty, fetch the transcripts, chunk and embed them, and store the vectors. Otherwise, load the index straight from the vector store.
-7. Create the PostgreSQL memory and the context chat engine.
+7. Create the PostgreSQL memory and the context chat engine, which ties together retrieval, reranking, memory, and the LLM.
 8. Run an interactive loop in the terminal until you type an exit word. Empty input is rejected with a warning.
 9. For every question, print the answer, the source nodes with their scores, the token usage, and the estimated cost.
 10. If anything fails after that, print the traceback and a categorized summary, then exit with code 1.
 
 ### ✨ Key Features
-* 🎬 **Self-written transcript loader.** Fetches captions with `youtube-transcript-api` and builds the LlamaIndex documents itself, with the video id and URL stored as metadata.
-* 🧠 **Semantic retrieval over the transcript.** The text is split into 2048-token chunks with a 200-token overlap, embedded with `models/gemini-embedding-2`, and searched by meaning rather than by exact keyword.
-* ♻️ **Ingest once.** If the ChromaDB collection already has data, the script skips the download and the embedding and loads the existing index.
-* 🎯 **Retrieve, then rerank.** Pulls the top 5 chunks for each question, then narrows them to the top 3 with a `cross-encoder/ms-marco-MiniLM-L-2-v2` reranker before they reach the LLM.
-* 💬 **Persistent conversational memory.** Chat history is stored in PostgreSQL through `Memory` and AsyncPG, so context survives between runs.
+* 🎬 **Self-written transcript loader.** Fetches captions with `youtube-transcript-api` and builds the LlamaIndex documents itself, with the video id and the URL stored as metadata.
+* 🧠 **Semantic retrieval over the transcript.** The text is split into 2048-token chunks with a 200-token overlap and embedded with `models/gemini-embedding-2`. Questions are matched to chunks by meaning, so a question does not need to reuse the speaker's exact words.
+* ♻️ **Ingest once.** If the ChromaDB collection already has data, the script skips the download and the embedding and loads the existing index, which keeps later runs fast and cheap.
+* 🎯 **Retrieve, then rerank.** Pulls the top 5 chunks for each question, then narrows them to the top 3 with a `cross-encoder/ms-marco-MiniLM-L-2-v2` reranker, so only the best passages reach the LLM.
+* 💬 **Persistent conversational memory.** Chat history is stored in PostgreSQL through `Memory` and AsyncPG, so a follow-up question still makes sense after you restart the script.
 * 🧱 **Grounded by instruction.** A strict system prompt tells the model to answer only from the transcript and to admit when it does not know.
-* 🔍 **Transparent answers.** The retrieved source nodes are printed with their scores and text after every response.
-* 📊 **Token and cost tracking.** Token counts come from LlamaIndex's callback handler, and the cost is estimated per turn through LiteLLM.
-* 🛰️ **Phoenix tracing.** Every run sends its traces to the Arize Phoenix project `youtube_vector_project`.
-* 🛡️ **Categorized error handling.** Failures print the raw traceback, then a readable summary such as quota, authentication, database, or access error.
+* 🔍 **Transparent answers.** The retrieved source nodes are printed with their scores and text after every response, so each answer can be checked against the passages behind it.
+* 📊 **Token and cost tracking.** Token counts come from LlamaIndex's callback handler, and the cost of each turn is estimated through LiteLLM.
+* 🛰️ **Phoenix tracing.** Every run sends its traces to the Arize Phoenix project `youtube_vector_project`, where each step of a question can be inspected.
+* 🛡️ **Categorized error handling.** Failures print the raw traceback for debugging, then a readable summary such as a quota, authentication, database, or access error.
 
 ---
 
@@ -58,9 +58,9 @@ Here is what happens when you run the script:
 Video is where a lot of knowledge lives today, and it is hard to work with. You cannot press `Ctrl+F` on something that was spoken, and scrubbing through an hour of video to find one explanation is slow. Pasting a transcript into a general chatbot brings its own problems. Four of them show up when you try to build something better.
 
 1. **A video cannot be searched like text.** Finding the part that explains why something works, or how two ideas connect, means watching or skimming. Keyword search would not help much even on the transcript, because a question phrased differently from the speaker's words can match nothing.
-2. **A general chatbot answers from memory, not from the video.** Asked about a specific video, a plain LLM may rely on old training data, mix in other sources, or guess, and it has no duty to say "that was not in the video".
-3. **Naive pipelines are wasteful and forgetful.** A basic fetch-embed-ask script downloads and embeds the same video on every run, which costs time and embedding calls, and it loses the whole conversation when the process exits.
-4. **It is hard to see what an answer was based on and what it cost.** Without printed sources and token counts, you cannot check an answer against the video or know what a question cost.
+2. **A general chatbot answers from memory, not from the video.** Asked about a specific video, a plain LLM may rely on old training data, mix in other sources, or guess. It also has no duty to say "that was not in the video", so you cannot tell which parts of its answer came from the video you care about.
+3. **Naive pipelines are wasteful and forgetful.** A basic fetch-embed-ask script downloads and embeds the same video on every run, which costs time and embedding calls. It also loses the whole conversation when the process exits, so every session starts from zero.
+4. **It is hard to see what an answer was based on and what it cost.** Without printed sources and token counts, you cannot check an answer against the video, and you cannot tell how many tokens a question used or what it cost.
 
 ### 💡 The Solution
 
@@ -68,10 +68,10 @@ Each problem maps to one piece of the pipeline, and each piece has a known gap.
 
 | Problem | How this repo handles it | What is still missing |
 | :--- | :--- | :--- |
-| 1. Video cannot be searched | The transcript is split into overlapping chunks, embedded, and searched by meaning in ChromaDB | Only the captions are used, so videos without captions cannot be read, and the default transcript language is English |
-| 2. Answers from memory | Retrieved chunks are reranked by a cross-encoder, a strict system prompt limits the answer to them, and the source nodes are printed | The limit is an instruction to the model and not a hard check on its output |
-| 3. Wasteful and forgetful | The ingestion step is skipped when the collection has data, and chat history lives in PostgreSQL | The check only looks at whether the collection is empty, and the session id is fixed in the script |
-| 4. Hidden sources and cost | Source nodes, token counts, and a per-turn cost estimate are printed, and Phoenix records a trace | Token counts use an OpenAI tokenizer, so they are approximate for Gemini |
+| 1. Video cannot be searched | The transcript is split into overlapping chunks, embedded, and searched by meaning in ChromaDB, so a question can find the relevant passage even when the wording differs | Only the captions are used, so videos without captions cannot be read, and the transcript is requested in the default language, which is English |
+| 2. Answers from memory | Retrieved chunks are reranked by a cross-encoder, a strict system prompt limits the answer to them, and the source nodes are printed so the answer can be checked | The limit is an instruction to the model and not a hard check on its output, so the printed sources remain the way to verify |
+| 3. Wasteful and forgetful | The ingestion step is skipped when the collection already has data, and the chat history lives in PostgreSQL, so repeated use stays cheap and continuous | The check only looks at whether the collection is empty, and the session id is fixed in the script, so every run continues the same conversation |
+| 4. Hidden sources and cost | Source nodes, token counts, and a per-turn cost estimate are printed, and Phoenix records a trace of every run | Token counts use an OpenAI tokenizer, so they are approximate for Gemini, and the cost covers LLM calls only |
 
 ---
 
@@ -81,19 +81,19 @@ If RAG is new to you, this table explains the terms used in the rest of the READ
 
 | Concept | Plain-language explanation | Where you see it |
 | :--- | :--- | :--- |
-| **RAG** | Retrieval-Augmented Generation. First find the passages that are relevant to the question, then give them to the LLM together with the question, so the answer is based on your source | The whole script |
-| **Transcript** | The captions of a video as text. Here it is fetched with `youtube-transcript-api` and joined into one text per video | `load_youtube_transcripts` |
-| **Document** | A LlamaIndex object that holds text and metadata. Each video becomes one document with its `video_id` and `url` | `Document(...)` |
+| **RAG** | Retrieval-Augmented Generation. First find the passages that are relevant to the question, then give them to the LLM together with the question, so the answer is based on your source and not only on what the model remembers | The whole script |
+| **Transcript** | The captions of a video as text. Here it is fetched with `youtube-transcript-api` and joined into one continuous text per video | `load_youtube_transcripts` |
+| **Document** | A LlamaIndex object that holds text and metadata. Each video becomes one document, with its `video_id` and `url` stored as metadata | `Document(...)` |
 | **Chunking** | Splitting long text into smaller pieces, because search and prompting work better with short passages. `chunk_size=2048` is counted in tokens, and `chunk_overlap=200` repeats the last 200 tokens at the start of the next chunk, so a sentence cut at the boundary keeps its context | `SentenceSplitter` |
-| **Embedding** | A list of numbers that represents the meaning of a text. Texts with similar meaning get similar numbers, which makes search by meaning possible | `models/gemini-embedding-2` |
+| **Embedding** | A list of numbers that represents the meaning of a text. Texts with similar meaning get similar numbers, which is what makes search by meaning possible | `models/gemini-embedding-2` |
 | **Chroma collection** | A named container inside ChromaDB that holds vectors, much like a table in a database | `youtube_docs` |
-| **Vector store and index** | The place where chunks and embeddings are kept, and the LlamaIndex object that searches it | `ChromaVectorStore`, `VectorStoreIndex` |
-| **Retrieval and top-k** | Finding the chunks whose embeddings are closest to the question. `similarity_top_k=5` means "fetch the 5 closest" | `as_chat_engine(..., similarity_top_k=5)` |
+| **Vector store and index** | The vector store is where chunks and their embeddings are kept. The index is the LlamaIndex object that searches it | `ChromaVectorStore`, `VectorStoreIndex` |
+| **Retrieval and top-k** | Finding the chunks whose embeddings are closest to the question's embedding. `similarity_top_k=5` means "fetch the 5 closest" | `as_chat_engine(..., similarity_top_k=5)` |
 | **Reranker (cross-encoder)** | A second, more careful scoring step. The first search compares embeddings quickly. The cross-encoder then reads the question and each retrieved chunk together and re-scores them, keeping only the best `top_n` | `SentenceTransformerRerank` (5 fetched, 3 kept) |
 | **Context chat engine** | A chat engine that, for every message, retrieves context, adds it to the prompt, and remembers the exchange | `chat_mode="context"` |
-| **System prompt** | A standing instruction given to the LLM before the conversation, here "answer only from the transcript" | `system_prompt` |
-| **`Memory`** | LlamaIndex's conversation memory. With `async_database_uri`, the history is stored in a database table. `token_limit` caps how much history is kept | `Memory.from_defaults(...)` |
-| **LiteLLM** | A library that offers one interface to many LLM providers. Here it calls Gemini and provides the cost calculation | `LiteLLM`, `litellm.completion_cost` |
+| **System prompt** | A standing instruction given to the LLM before the conversation starts. Here it says to answer only from the transcript | `system_prompt` |
+| **`Memory`** | LlamaIndex's conversation memory. With `async_database_uri`, the history is stored in a database table, and `token_limit` caps how much history is kept | `Memory.from_defaults(...)` |
+| **LiteLLM** | A library that offers one interface to many LLM providers. Here it calls Gemini and also provides the cost calculation | `LiteLLM`, `litellm.completion_cost` |
 | **Trace** | A step-by-step record of what happened inside a run. Arize Phoenix collects traces and shows them in a web interface | `register(...)`, `LlamaIndexInstrumentor` |
 | **`TokenCountingHandler`** | A LlamaIndex callback that counts the tokens sent to and received from the LLM | `token_counter` |
 | **`LlamaDebugHandler`** | A LlamaIndex callback that records LLM inputs and outputs. The script reads its events to calculate the cost | `debug_handler` |
@@ -107,31 +107,31 @@ If RAG is new to you, this table explains the terms used in the rest of the READ
 | :--- | :--- | :--- |
 | **Transcript source** | `youtube-transcript-api` | Fetches the captions of each video |
 | **Orchestration** | LlamaIndex core (`Settings`, `Document`, `VectorStoreIndex`, `StorageContext`, `SentenceSplitter`) | Global configuration, chunking, and index construction |
-| **Text embeddings** | `GoogleGenAIEmbedding` (`models/gemini-embedding-2`) | Embeds the transcript chunks |
-| **Vector storage** | ChromaDB Cloud (`chromadb.CloudClient`, `ChromaVectorStore`) | Stores the vectors in the `youtube_docs` collection |
+| **Text embeddings** | `GoogleGenAIEmbedding` (`models/gemini-embedding-2`) | Embeds the transcript chunks and each question |
+| **Vector storage** | ChromaDB Cloud (`chromadb.CloudClient`, `ChromaVectorStore`) | Stores the vectors in the `youtube_docs` collection and searches them |
 | **Reranking** | `SentenceTransformerRerank` (`cross-encoder/ms-marco-MiniLM-L-2-v2`) | Rescores the retrieved chunks and keeps the top 3 |
 | **LLM** | LiteLLM with `gemini/gemini-2.5-flash` (temperature 0.3) | Answer generation |
 | **Chat engine** | LlamaIndex `context` chat mode | Retrieves context on every turn and injects it into the prompt |
 | **Conversation memory** | `Memory` + AsyncPG (PostgreSQL) | Persistent chat history across runs |
 | **Observability** | Arize Phoenix (`phoenix.otel`, OpenInference LlamaIndex instrumentor) | Traces of every run |
-| **Metrics** | `TokenCountingHandler` with `tiktoken`, `LlamaDebugHandler`, `litellm.completion_cost` | Token counts and cost estimate |
+| **Metrics** | `TokenCountingHandler` with `tiktoken`, `LlamaDebugHandler`, `litellm.completion_cost` | Token counts and the cost estimate |
 | **Config & runtime** | `python-dotenv`, `nest-asyncio`, `asyncio` | Loads secrets from `.env` and runs the async loop |
 
 ---
 
 ## ⚙️ Configuration Reference
 
-Every tunable value lives directly in `Vector-self-make-youtube-reader-cmd.py`.
+Every tunable value lives directly in `Vector-self-make-youtube-reader-cmd.py`, so changing a setting means editing the script.
 
 | Setting | Value | Effect |
 | :--- | :--- | :--- |
 | **Target videos** | `youtube_urls = ["https://www.youtube.com/watch?v=i3OYlaoj-BM"]` | The videos that are fetched and indexed on a fresh run |
-| **Transcript language** | The default of `youtube-transcript-api` (English) | The transcript is requested without a language option |
+| **Transcript language** | The default of `youtube-transcript-api` (English) | The transcript is requested without a language option, so a video needs an English transcript |
 | **Chunking** | `chunk_size=2048`, `chunk_overlap=200` | How the transcript is split before embedding |
-| **Embedding model** | `models/gemini-embedding-2`, `embed_batch_size=50` | Embeds the chunks and each question |
-| **Retrieval depth** | `similarity_top_k=5` | Number of chunks fetched per question |
+| **Embedding model** | `models/gemini-embedding-2`, `embed_batch_size=50` | Embeds the chunks and each question, 50 texts per request |
+| **Retrieval depth** | `similarity_top_k=5` | Number of chunks fetched for each question |
 | **Reranker** | `cross-encoder/ms-marco-MiniLM-L-2-v2`, `top_n=3` | Number of chunks that reach the LLM |
-| **LLM** | `gemini/gemini-2.5-flash`, `temperature=0.3` | The answer model and its randomness |
+| **LLM** | `gemini/gemini-2.5-flash`, `temperature=0.3` | The answer model, and its randomness (a lower value gives more focused answers) |
 | **LLM fallback** | A commented-out block in the script | Model fallback and retries are disabled |
 | **Chat mode** | `context` | Retrieves context on every message |
 | **Chroma collection** | `youtube_docs` | Where the transcript vectors are stored |
@@ -154,9 +154,9 @@ The first three questions are the ones used in the [benchmark repository](https:
 
 | Question | What it shows |
 | :--- | :--- |
-| `What is this video mainly about?` | A simple question that needs the overall topic |
-| `What are the main points or steps explained in this video, and how do they relate to each other?` | An analytical question that needs several parts of the transcript |
-| `Based on everything discussed in this video, what conclusion or key takeaway can be drawn, and what supporting details from different parts of the video lead to that conclusion?` | A multi-hop question that connects details from different parts of the video |
+| `What is this video mainly about?` | A simple question that needs the overall topic of the video |
+| `What are the main points or steps explained in this video, and how do they relate to each other?` | An analytical question that needs several parts of the transcript and how they connect |
+| `Based on everything discussed in this video, what conclusion or key takeaway can be drawn, and what supporting details from different parts of the video lead to that conclusion?` | A multi-hop question that has to connect details from different parts of the video |
 | `Explain that in simpler terms`, right after any answer | The memory at work, because the follow-up only makes sense with the previous answer |
 | A question the video never covers | The grounding instruction at work, where the model should say it does not know |
 
@@ -164,7 +164,7 @@ The first three questions are the ones used in the [benchmark repository](https:
 
 ## 🖥️ Example Console Output
 
-An illustrative first-run session, based on the messages the script prints:
+An illustrative first-run session, based on the messages the script prints. Text in angle brackets stands for values that change from run to run.
 
 ```text
 ⚙️ [SYSTEM] Configuring LlamaIndex Settings (LLM & Embeddings)...
@@ -223,8 +223,8 @@ youtube-vector-rag-llamaindex/
 
 | Path | Description |
 | :--- | :--- |
-| `Vector-self-make-youtube-reader-cmd.py` | The full pipeline: transcript loading, indexing, retrieval, reranking, chat engine, and CLI loop in one script |
-| `requirements.txt` | All Python dependencies, with notes inside the file |
+| `Vector-self-make-youtube-reader-cmd.py` | The full pipeline in one script: transcript loading, indexing, retrieval, reranking, chat engine, and the CLI loop |
+| `requirements.txt` | All Python dependencies, with notes inside the file that explain why each one is needed |
 | `LICENSE` | MIT License |
 | `README.md` | You're reading it |
 
@@ -260,13 +260,13 @@ flowchart TD
     N --> O["Answer, source nodes, tokens, and cost are printed"]
 ```
 
-> **Note.** On every run, the script first checks whether the Chroma collection already has data. If it does, nothing is downloaded or embedded again, and the stored index is loaded. Phoenix records a trace for each run, and the token counter and debug handler observe every LLM call.
+> **Note.** On every run, the script first checks whether the Chroma collection already has data. If it does, nothing is downloaded or embedded again, and the stored index is loaded. The ingestion path in the diagram therefore runs only once for a fresh collection. Phoenix records a trace for each run, and the token counter and debug handler observe every LLM call.
 
 ---
 
 ## 🆚 Three RAG Architectures
 
-This repository implements **Vector RAG**. The same task can also be done with a knowledge graph, or with both approaches combined. That gives three versions of the same chatbot, plus a repository that measures what each one costs. This section explains how they differ, where each one lives, and what the benchmark found.
+This repository implements **Vector RAG**. The same task of answering questions about a video can also be done with a knowledge graph, or with both approaches combined. That makes three versions of the same chatbot, two of which are still to come, plus a repository that measures what each one costs. This section explains how they differ, where each one lives, and what the benchmark found.
 
 ### 📍 Where Each Architecture Lives
 
@@ -307,7 +307,7 @@ These numbers come from one video, three questions, and one run per question, wi
 
 ### 🧭 Which One Fits Your Case
 
-* If you want the simplest setup and the lowest cost, Vector RAG is the place to start, and this repository shows it.
+* If you want the simplest setup and the lowest cost, Vector RAG is the place to start, and this repository shows how it works end to end.
 * Graph and Hybrid RAG add a graph store and an LLM step at indexing time, and the benchmark shows what each architecture costs per question.
 * Whether Graph or Hybrid RAG answers better than Vector RAG was not measured, so the choice between them still needs a quality comparison.
 
@@ -318,7 +318,7 @@ These numbers come from one video, three questions, and one run per question, wi
 ### 📋 Prerequisites
 * **Python 3.10 or newer** is required.
 * **Accounts and keys** you will need: a Google AI Studio API key for Gemini, a [Chroma Cloud](https://www.trychroma.com/) API key, an [Arize Phoenix](https://phoenix.arize.com/) API key, and a PostgreSQL database for the conversation memory. A hosted database, for example one on Supabase, works with its connection string.
-* **Internet access**, because the script calls YouTube, Gemini, ChromaDB Cloud, Phoenix, and PostgreSQL. On the first run it also downloads the reranker weights from Hugging Face and the tokenizer file that `tiktoken` needs.
+* **Internet access**, because the script calls YouTube, Gemini, ChromaDB Cloud, Phoenix, and PostgreSQL. On the first run it also downloads the reranker weights from Hugging Face and the tokenizer file that `tiktoken` needs, so the first start takes longer than later ones.
 
 ### 🛠️ CLI Installation & Execution
 
@@ -329,6 +329,7 @@ cd youtube-vector-rag-llamaindex
 ```
 
 #### 2. Create and Activate a Virtual Environment
+A virtual environment keeps this project's packages separate from the rest of your system.
 ```bash
 # macOS/Linux
 python3 -m venv venv
@@ -359,10 +360,10 @@ ASYNCPG_DATABASE_URL=postgresql+asyncpg://user:password@host:5432/dbname
 | Variable | Purpose |
 | :--- | :--- |
 | `GOOGLE_API_KEY` | Gemini key. The embedding model receives it directly, and LiteLLM finds its Gemini key in the environment for the LLM calls |
-| `CHROMA_API_KEY` | Connects to ChromaDB Cloud |
+| `CHROMA_API_KEY` | Connects to ChromaDB Cloud, where the vectors are stored |
 | `PHOENIX_API_KEY` | Authenticates the trace upload to Phoenix |
 | `PHOENIX_COLLECTOR_ENDPOINT` | Optional. Where traces are sent |
-| `ASYNCPG_DATABASE_URL` | Async connection string for the chat memory table |
+| `ASYNCPG_DATABASE_URL` | Async connection string of the PostgreSQL database that holds the chat memory table |
 
 > The script has a default value for `PHOENIX_COLLECTOR_ENDPOINT` that points to the author's own Phoenix space. Set this variable to your own space, otherwise your traces will not appear in your account.
 >
@@ -415,15 +416,15 @@ When something fails after the startup key check, the script prints the tracebac
 
 | Symptom | Likely cause | What to do |
 | :--- | :--- | :--- |
-| `GOOGLE_API_KEY is missing` or `PHOENIX_API_KEY is missing` at startup | The variable is missing from `.env` | Add it to `.env` in the project root |
+| `GOOGLE_API_KEY is missing` or `PHOENIX_API_KEY is missing` at startup | The variable is missing from `.env`, or the file is not in the project root | Add the variable to `.env` in the project root and run the script again |
 | LiteLLM reports a missing Gemini key | LiteLLM did not find the key in the environment | Also set `GEMINI_API_KEY` in `.env` with the same value as `GOOGLE_API_KEY` |
-| `UNKNOWN ERROR` mentioning a transcript | The video has no captions, captions are disabled, or no English transcript exists | Choose a video with English captions |
+| `UNKNOWN ERROR` mentioning a transcript | The video has no captions, captions are disabled, or no English transcript exists | Choose a video that has English captions |
 | `UNKNOWN ERROR` mentioning an invalid YouTube URL | The URL does not contain `youtube` or `youtu.be` | Use a standard `youtube.com` or `youtu.be` link |
 | YouTube refuses the request | YouTube can block requests from some cloud provider and VPN IP addresses | Run the script from a regular home or office connection |
 | Answers still come from the old video | The collection already has data, so the new URLs are ignored | Delete the collection as shown in step 7 |
 | `UNKNOWN ERROR` (`TypeError`) saying `CloudClient()` is missing `tenant` and `database` | An old `chromadb` version is installed, and it requires both arguments | Run `pip install --upgrade "chromadb>=1.1.0"` or reinstall from `requirements.txt` |
 | `ImportError` asking for `sentence-transformers` or `torch` | The reranker dependencies are not installed | Run `pip install -r requirements.txt` in the active virtual environment |
-| The first run is slow before the chat starts | The reranker weights are downloaded from Hugging Face | Wait for the download. Later runs reuse the files |
+| The first run is slow before the chat starts | The reranker weights are downloaded from Hugging Face | Wait for the download to finish. Later runs reuse the files |
 | Traces do not show up in your Phoenix account | `PHOENIX_COLLECTOR_ENDPOINT` still points to the default space | Set it to your own Phoenix endpoint |
 | Error about the async driver | `asyncpg` is not installed, or `ASYNCPG_DATABASE_URL` does not start with `postgresql+asyncpg://` | Run `pip install -r requirements.txt` and check the URL |
 | The chat remembers an old conversation | The memory uses a fixed `session_id` | Change `session_id` in the script, or clear the `youtube_vector_memory` table |
@@ -436,7 +437,7 @@ When something fails after the startup key check, the script prints the tracebac
 
 This project set out to solve four problems: a video that cannot be searched like text, a general chatbot that answers from memory instead of from the video, a naive pipeline that downloads, embeds, and forgets everything on every run, and answers whose sources and cost stay hidden. The script addresses them directly. It fetches the transcript with its own loader, chunks and embeds it so questions are matched by meaning, reranks what it retrieves, tells the model to answer only from that context, and keeps both the vectors and the conversation so repeated use stays cheap and continuous. Every answer is printed with its source passages, its token usage, and its estimated cost.
 
-The design choices hold up reasonably well on their own terms. Skipping ingestion when the collection has data avoids paying for the same download and embeddings twice. Reranking with a small cross-encoder before the LLM is a deliberate quality step, and keeping the whole flow in one readable script makes it easy to follow, run, and modify.
+The design choices hold up reasonably well on their own terms. Skipping ingestion when the collection has data avoids paying for the same download and embeddings twice. Reranking with a small cross-encoder before the LLM is a deliberate quality step, because it filters the retrieved chunks before they take up space in the prompt. Keeping the whole flow in one readable script makes it easy to follow, run, and modify.
 
 It is also not a finished product. The video list is hardcoded, changing it requires clearing the collection by hand, the transcript carries no timestamps, and nothing measures how good the answers are. The sections below go through these gaps and lay out the next steps.
 
@@ -445,37 +446,37 @@ It is also not a finished product. The video list is hardcoded, changing it requ
 ## ⚠️ System Limitations
 
 ### 🏗️ Architectural Limitations
-* **Hardcoded target videos.** The URLs are set by editing the `youtube_urls` list in the script, not passed in as an argument.
-* **One-time ingestion gate.** Fetching and indexing only run when the `youtube_docs` collection is empty. Changing the list without clearing the collection does not trigger re-ingestion, so the script keeps answering from the old videos.
-* **One shared collection and one fixed conversation.** Every video goes into the same collection, and the memory uses one `session_id` and one table name, so every run continues the same conversation, even after you switch videos.
-* **Any error ends the session.** After the startup key check, the whole pipeline, including the chat loop, sits inside one top-level `try` block. A transient failure on a single turn, such as an API rate limit, is reported but still stops the script.
+* **Hardcoded target videos.** The URLs are set by editing the `youtube_urls` list in the script, not passed in as an argument, so switching videos means opening the code.
+* **One-time ingestion gate.** Fetching and indexing only run when the `youtube_docs` collection is empty. Changing the list without clearing the collection does not trigger re-ingestion, so the script keeps answering from the old videos without any warning.
+* **One shared collection and one fixed conversation.** Every video goes into the same collection, and the memory uses one `session_id` and one table name. Every run continues the same conversation, even after you switch videos, so old topics can mix into new answers.
+* **Any error ends the session.** After the startup key check, the whole pipeline, including the chat loop, sits inside one top-level `try` block. A transient failure on a single turn, such as an API rate limit, is reported but still stops the script, and you have to start it again.
 * **Settings are hardcoded.** The collection name, model names, chunk settings, retrieval depth, Phoenix project name, and memory settings are fixed values in the script.
-* **Minimal startup validation.** Only `GOOGLE_API_KEY` and `PHOENIX_API_KEY` are checked. A missing Chroma key or database URL only shows up when that client is first used.
-* **Model fallback is disabled.** The fallback and retry options are commented out, so a failed model call is not retried on another model.
+* **Minimal startup validation.** Only `GOOGLE_API_KEY` and `PHOENIX_API_KEY` are checked. A missing Chroma key or database URL only shows up later, when that client is first used.
+* **Model fallback is disabled.** The fallback and retry options are commented out, so a failed model call is not retried and is not sent to another model.
 * **Dependence on external services.** The script needs live access to YouTube, Gemini, ChromaDB Cloud, Phoenix, and PostgreSQL. There is no offline mode.
-* **CLI-only interface.** All interaction happens in a terminal. There is no web page and no visual history.
+* **CLI-only interface.** All interaction happens in a terminal. There is no web page and no visual chat history.
 
 ### 🔬 Model & Domain Limitations
 * **Captions only.** A video without captions cannot be read, and automatic captions can contain mistakes that the model then repeats. The transcript is requested in the default language, which is English.
 * **No timestamps.** The loader joins the caption snippets into plain text, so answers cannot point to a moment in the video.
-* **Simple URL parsing.** The video id is taken from the URL with string rules. Unusual link formats may fail.
-* **Retrieval on every message.** The context chat mode retrieves passages for every message, including greetings and thanks.
-* **Grounding relies on the prompt.** Staying within the transcript is enforced by the system prompt and the retrieval setup, not by a hard check on the output.
+* **Simple URL parsing.** The video id is taken from the URL with string rules, so unusual link formats may fail or give a wrong id.
+* **Retrieval on every message.** The context chat mode retrieves passages for every message, including greetings and thanks, which uses tokens even when no lookup is needed.
+* **Grounding relies on the prompt.** Staying within the transcript is enforced by the system prompt and the retrieval setup, not by a hard check on the output, so the model can still go beyond the retrieved passages.
 * **Fixed retrieval settings.** Chunk size, overlap, `similarity_top_k`, and the reranker's `top_n` are fixed. A broad question that needs many parts of a long video is limited by only three chunks reaching the LLM.
 * **Local reranking.** The cross-encoder runs on your machine, so it needs `torch`, a one-time weight download, and some compute on every turn.
-* **Token counts are approximate.** `TokenCountingHandler` uses the `cl100k_base` tokenizer from OpenAI, while the model is Gemini.
+* **Token counts are approximate.** `TokenCountingHandler` uses the `cl100k_base` tokenizer from OpenAI, while the model is Gemini, so the numbers can differ from what the provider counts.
 * **The cost covers LLM calls only.** Embedding calls are not included, and the estimate depends on the response data that LiteLLM receives.
-* **No quality evaluation.** Retrieval and answer quality were not measured against a labeled question set.
+* **No quality evaluation.** Retrieval and answer quality were not measured against a labeled question set, so there is no number for how often the script retrieves the right passage or answers correctly.
 
 ---
 
 ## 🚀 Future Work
-* **Take the video URLs as an argument.** Accept one or more URLs on the command line, so the code does not need editing.
-* **One collection and one session per video.** Name the collection and the memory session after the video id, so switching videos needs no manual cleanup.
+* **Take the video URLs as an argument.** Accept one or more URLs on the command line, so the code does not need editing to switch videos.
+* **One collection and one session per video.** Name the collection and the memory session after the video id, so switching videos needs no manual cleanup and old conversations do not mix in.
 * **Keep timestamps.** Store the start time of each caption in the metadata, so answers can point to the moment in the video.
 * **Support more transcript languages.** Let the user choose the language, or fall back to another one when English is missing.
-* **Make the chat loop resilient.** Move error handling inside the loop, so a failed turn prints the error and lets you try again.
-* **Enable model fallback.** Turn on the retry and fallback options through the LiteLLM configuration.
+* **Make the chat loop resilient.** Move error handling inside the loop, so a failed turn prints the error and lets you try again instead of ending the session.
+* **Enable model fallback.** Turn on the retry and fallback options through the LiteLLM configuration, so a temporary model failure does not stop a turn.
 * **Move configuration out of the code.** Take model names, chunk settings, and retrieval depth from environment variables or arguments.
 * **Evaluate retrieval and answers.** Build a small labeled question set for a few videos and measure retrieval and answer quality, instead of relying on fixed defaults.
 * **Add a simple interface.** A small Streamlit page would make the answers and their sources easier to read than terminal output.
