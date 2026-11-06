@@ -1,6 +1,6 @@
 # 🎬 YouTube Vector RAG Chatbot (LlamaIndex)
 
-A CLI chatbot that lets you chat with a YouTube video through its transcript. The first time you run it, it fetches the video's captions, splits them into overlapping chunks, embeds the chunks, and stores the vectors in ChromaDB Cloud. From then on, every question is answered by retrieving the most relevant chunks, reranking them with a cross-encoder, and passing the best ones to Gemini, which is instructed to answer strictly from what the video says. The conversation is saved in PostgreSQL, so it carries over between runs. This is the plain **Vector RAG** version, where context is found only by similarity search over embeddings.
+A CLI chatbot that lets you chat with a YouTube video through its transcript. The first time you run it, it fetches the video's captions, splits them into overlapping chunks, embeds the chunks, and stores the vectors in ChromaDB Cloud. From then on, every question is answered by retrieving the most relevant chunks, reranking them with a cross-encoder, and passing the best ones to Gemini, which is instructed to answer strictly from what the video says. The conversation is saved in PostgreSQL, so it carries over between runs. This is the plain **Vector RAG** version, where context is found only by similarity search over embeddings. The Graph version lives in [youtube-graph-rag-llamaindex](https://github.com/viochris/youtube-graph-rag-llamaindex), and the Hybrid version in [youtube-hybrid-rag-llamaindex](https://github.com/viochris/youtube-hybrid-rag-llamaindex).
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat&logo=python&logoColor=white)
 ![LlamaIndex](https://img.shields.io/badge/Framework-LlamaIndex-6E56CF?style=flat)
@@ -22,7 +22,7 @@ Downloading and embedding only happen when the ChromaDB collection is empty. On 
 
 The answers are meant to come from the retrieved transcript passages and not from the model's own memory. The system prompt tells the model to answer strictly from that context and to say so when the answer is not there. This is an instruction and not a hard check, so the printed sources are there to let you verify each answer. After every answer, the script prints the source passages with their scores, the token usage, and the estimated cost of that turn.
 
-This repository is the Vector version of a three-architecture comparison (Vector, Graph, and Hybrid RAG). See [Three RAG Architectures](#-three-rag-architectures) for how they differ and where each one lives.
+This repository is the Vector version of a three-architecture comparison: Vector RAG, [Graph RAG](https://github.com/viochris/youtube-graph-rag-llamaindex), and [Hybrid RAG](https://github.com/viochris/youtube-hybrid-rag-llamaindex). See [Three RAG Architectures](#-three-rag-architectures) for how they differ and where each one lives.
 
 Here is what happens when you run the script:
 
@@ -266,22 +266,22 @@ flowchart TD
 
 ## 🆚 Three RAG Architectures
 
-This repository implements **Vector RAG**. The same task of answering questions about a video can also be done with a knowledge graph, or with both approaches combined. That makes three versions of the same chatbot, two of which are still to come, plus a repository that measures what each one costs. This section explains how they differ, where each one lives, and what the benchmark found.
+This repository implements **Vector RAG**. The same task of answering questions about a video can also be done with a knowledge graph, or with both approaches combined. That makes three versions of the same chatbot, plus a repository that measures what each one costs. This section explains how they differ, where each one lives, and what the benchmark found.
 
 ### 📍 Where Each Architecture Lives
 
 | Architecture | Approach | Location |
 | :--- | :--- | :--- |
 | **Vector RAG** | Similarity search over embeddings | This repository (`Vector-self-make-youtube-reader-cmd.py`) |
-| **Graph RAG** | Search over a knowledge graph | Coming soon |
-| **Hybrid RAG** | Vector search and graph search combined | Coming soon |
+| **Graph RAG** | Search over a knowledge graph | [youtube-graph-rag-llamaindex](https://github.com/viochris/youtube-graph-rag-llamaindex) |
+| **Hybrid RAG** | Vector search and graph search combined | [youtube-hybrid-rag-llamaindex](https://github.com/viochris/youtube-hybrid-rag-llamaindex) |
 | **Token and cost benchmark** | Compares the three on the same video and questions | [rag-token-benchmark-vector-graph-hybrid](https://github.com/viochris/rag-token-benchmark-vector-graph-hybrid) |
 
 ### 🔍 What Differs
 
 The Graph and Hybrid columns follow the setup used in the benchmark repository.
 
-| Aspect | Vector RAG (this repo) | Graph RAG (coming soon) | Hybrid RAG (coming soon) |
+| Aspect | Vector RAG (this repo) | [Graph RAG](https://github.com/viochris/youtube-graph-rag-llamaindex) | [Hybrid RAG](https://github.com/viochris/youtube-hybrid-rag-llamaindex) |
 | :--- | :--- | :--- | :--- |
 | How context is found | The question is compared with the chunk embeddings, and the closest chunks are used | The text is turned into relationships (subject, relation, object) kept in a graph, and the question is answered from that graph together with the source text | Both retrievers run, and their results are merged with Reciprocal Rank Fusion. The LLM also writes extra variants of the question before the search |
 | Storage | ChromaDB Cloud | Neo4j | ChromaDB Cloud and Neo4j |
@@ -308,7 +308,7 @@ These numbers come from one video, three questions, and one run per question, wi
 ### 🧭 Which One Fits Your Case
 
 * If you want the simplest setup and the lowest cost, Vector RAG is the place to start, and this repository shows how it works end to end.
-* Graph and Hybrid RAG add a graph store and an LLM step at indexing time, and the benchmark shows what each architecture costs per question.
+* [Graph RAG](https://github.com/viochris/youtube-graph-rag-llamaindex) and [Hybrid RAG](https://github.com/viochris/youtube-hybrid-rag-llamaindex) add a graph store and an LLM step at indexing time, and the benchmark shows what each architecture costs per question.
 * Whether Graph or Hybrid RAG answers better than Vector RAG was not measured, so the choice between them still needs a quality comparison.
 
 ---
